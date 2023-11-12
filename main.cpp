@@ -1,82 +1,112 @@
 #include <iostream>
-#include <fstream>
 #include <regex>
-#include <map>
-#include <vector>
-#include <sstream>
-#include <windows.h>
+#include <fstream>
+#include <cstring>
 
-std::map<std::string, std::vector<std::string>> sortTokensByClass(const std::vector<std::pair<std::string, std::string>>& token_pairs) {
-    std::map<std::string, std::vector<std::string>> sortedTokens;
+void lexRegexAnalyze(const std::string &py, std::ofstream &outfile) {
+    std::regex whitespaceRegex("(\\s+)");
+    std::regex keywordRegex("\\b(function|var|return|if|else|while|for)\\b");
+    std::regex identifierRegex("\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b");
+    std::regex dotRegex("\\.");
+    std::regex numericLiteralRegex("\\b\\d+\\.?\\d*([eE][-+]?\\d+)?\\b");
+    std::regex hexLiteralRegex("\\b0x[0-9a-fA-F]+\\b");
+    std::regex stringLiteralRegex("(\"(.*?)\")");
+    std::regex charLiteralRegex("'.'");
+    std::regex preprocessorDirectiveRegex("#\\w+");
+    std::regex commentRegex("//.*|/\\*.*?\\*/|#.*");
+    std::regex operatorRegex("(==|!=|<=|>=|&&|\\|\\||\\+\\+|--|\\+|-|\\*|/|%|&|\\||\\^|~|<<|>>|!|=)");
+    std::regex punctuationRegex("(\\{|\\}|\\(|\\)|\\[|\\]|;|,|:)");
+    std::regex errorRegex("[^a-zA-Z0-9_+=\\-*/%&|!^<>=~#\"'().,{};\\s`\\[\\]\\$\\:\\?\\\\]");
 
-    for (const auto& pair : token_pairs) {
-        sortedTokens[pair.second].push_back(pair.first);
-    }
+    std::string remainingCode = py;
 
-    return sortedTokens;
-}
-int main() {
-    std::map<std::string, std::regex> patterns = {
-            {"comment", std::regex(R"(#.*)")},
-            {"preprocessor", std::regex(R"(^(import|from).+)")},
-            {"reserved_word", std::regex(R"(\b(if|else|while|for|def|return|class|try|except|with|break|continue|and|or|not|pass|is|in|lambda|yield)\b)")},
-            {"operator", std::regex(R"(\+|-|\*|/|//|%|&|\||^|<<|>>|<|>|<=|>=|==|!=|~)")},
-            {"punctuation", std::regex(R"([(),:\[\]{}])")},
-            {"identifier", std::regex(R"(\b([a-zA-Z_]\w*)\b)")},
-            {"number_decimal", std::regex(R"(\b\d+\b)")},
-            {"number_float", std::regex(R"(\b\d+\.\d+\b)")},
-            {"number_hex", std::regex(R"(\b0x[a-fA-F0-9]+\b)")},
-            {"string", std::regex(R"(["'].*?["'])")}
-    };
-    std::map<std::string, WORD> token_colors = {
-            {"comment", FOREGROUND_GREEN},
-            {"preprocessor", FOREGROUND_RED},
-            {"reserved_word", FOREGROUND_BLUE},
-            {"operator", FOREGROUND_BLUE | FOREGROUND_GREEN},
-            {"punctuation", FOREGROUND_GREEN | FOREGROUND_RED},
-            {"identifier", FOREGROUND_GREEN | FOREGROUND_BLUE},
-            {"number_decimal", FOREGROUND_RED | FOREGROUND_BLUE},
-            {"number_float", FOREGROUND_RED | FOREGROUND_GREEN},
-            {"number_hex", FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_GREEN},
-            {"string", FOREGROUND_INTENSITY}
-    };
-    std::ifstream infile("python.txt");
-    std::string content((std::istreambuf_iterator<char>(infile)), (std::istreambuf_iterator<char>()));
+    while (!remainingCode.empty()) {
+        std::smatch match;
+        bool found = false;
 
-    std::vector<std::pair<std::string, std::string>> token_pairs;
+        std::vector<std::pair<std::regex, std::string>> patterns = {
+                {errorRegex, "Unrecognized token"},
+                {whitespaceRegex, "Whitespace"},
+                {keywordRegex, "Keyword"},
+                {identifierRegex, "Identifier"},
+                {numericLiteralRegex, "Numeric Literal"},
+                {hexLiteralRegex, "Hexadecimal Literal"},
+                {stringLiteralRegex, "String Literal"},
+                {charLiteralRegex, "Char Literal"},
+                {preprocessorDirectiveRegex, "Preprocessor directive"},
+                {commentRegex, "Comment"},
+                {operatorRegex, "Operator"},
+                {punctuationRegex, "Punctuation"},
+                {dotRegex, "Dot Operator"}
+        };
 
-    std::istringstream iss(content);
-    std::string line;
-    while (std::getline(iss, line)) {
-        for (auto& pattern : patterns) {
-            std::smatch match;
-            if (std::regex_search(line, match, pattern.second)) {
-                token_pairs.push_back({match[0], pattern.first});
+        for (const auto& [regex, type] : patterns) {
+            if (std::regex_search(remainingCode, match, regex)) {
+                if (match.position() == 0) {
+                    if (type != "Whitespace") {
+                        outfile << match[0] << " - " << type << "\n";
+                    }
+                    remainingCode = match.suffix().str();
+                    found = true;
+                    break;
+                }
             }
         }
+        if (!found) {
+            std::cerr << "Unrecognized sequence: " << remainingCode << "\n";
+            break;
+        }
+    }
+}
+
+bool tryOpenFile(std::ifstream& file, const std::string& filename) {
+    file.open(filename);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file '" << filename << "'.\n";
+        std::cerr << "Error: " << std::strerror(errno) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool getUserConsent() {
+    std::string choice;
+    std::cout << "Would you like to retry? (yes/no): ";
+    std::cin >> choice;
+    return choice == "yes";
+}
+
+int main() {
+    const int retryLimit = 3;
+    std::string filename;
+    std::ifstream file;
+
+    for (int attempts = 0; attempts < retryLimit; ++attempts) {
+        if (attempts > 0 && !getUserConsent()) {
+            std::cerr << "Exiting program.\n";
+            return 1;
+        }
+
+        std::cout << "Enter a filename: ";
+        std::cin >> filename;
+
+        if (tryOpenFile(file, filename)) {
+            break;
+        }
+    }
+    if (!file.is_open()) {
+        std::cerr << "Exceeded maximum retries. Exiting program.\n";
+        return 1;
     }
 
-    auto sortedTokens = sortTokensByClass(token_pairs);
+    std::string py((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
-    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
     std::ofstream outfile("out.txt");
 
-    for (const auto& [tokenClass, tokens] : sortedTokens) {
-        for (const auto& token : tokens) {
-            SetConsoleTextAttribute(handle, token_colors[tokenClass]);
-            outfile << token << " ";
-        }
-    }
-    SetConsoleTextAttribute(handle, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
-    outfile << "\n\n";
-
-    for (const auto& [tokenClass, tokens] : sortedTokens) {
-        for (const auto& token : tokens) {
-            outfile << "< " << token << " , " << tokenClass << " >\n";
-        }
-    }
+    lexRegexAnalyze(py, outfile);
 
     outfile.close();
 
     return 0;
 }
+
